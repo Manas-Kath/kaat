@@ -1,0 +1,22 @@
+# ========== UNITY ==========
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+
+# ========== IDE ==========
+.vs/
+.vscode/
+*.csproj
+*.sln
+*.slnx
+*.user
+*.userprefs
+
+# ========== OS ==========
+.DS_Store
+Thumbs.db
+
