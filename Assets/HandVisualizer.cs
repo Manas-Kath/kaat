@@ -3,38 +3,54 @@ using UnityEngine;
 using uVegas.Core.Cards;
 using uVegas.UI;
 using System.Linq; 
+using DG.Tweening;
+using Unity.Netcode; 
 
 public class HandVisualizer : MonoBehaviour
 {
     [Header("Identity")]
-    public int playerIndex; // 0=Bottom, 1=Right, 2=Top, 3=Left
+    public int playerIndex; 
     public bool isHuman;    
 
     [Header("References")]
     public Transform playSlot; 
-    public UICard cardPrefab;
+    public UICard cardPrefab; 
     public CardTheme cardTheme;
     public Transform cardContainer;
 
     [Header("Layout Settings")]
-    // CHANGED: Defaults set to 0 to prevent fanning/arching
-    public float fanSpreadAngle = 0f;  
-    public float cardSpacing = 50f;     // Increased slightly for flat layout
-    public float verticalArch = 0f;     
+    public float fanSpreadAngle = 15f;  
+    public float cardSpacing = 35f; 
+    public float verticalArch = 10f;     
 
     public List<UICard> currentHandObjects = new List<UICard>();
 
-    public void AddCardToHand(Card cardData)
+    public void AddCardToHand(UICard cardInstance, Vector3 dealerWorldPos)
     {
-        UICard newCard = Instantiate(cardPrefab, cardContainer);
-        newCard.name = $"{cardData.rank} of {cardData.suit}";
-        newCard.transform.localPosition = Vector3.zero;
-        newCard.Init(cardData, cardTheme);
+        SanitizeList();
 
-        var interaction = newCard.GetComponent<CardInteraction>();
+        // Safety: Ensure we aren't adding duplicates
+        if (currentHandObjects.Contains(cardInstance)) return;
+
+        cardInstance.transform.position = dealerWorldPos;
+        
+        // Fix: Use AnchoredPosition for UI to prevent weird offsets
+        cardInstance.transform.SetParent(cardContainer, false);
+        var rect = cardInstance.GetComponent<RectTransform>();
+        if(rect != null) rect.anchoredPosition = Vector2.zero;
+
+        cardInstance.transform.localRotation = Quaternion.identity; 
+        cardInstance.transform.localScale = Vector3.one;
+
+        if (!isHuman) cardInstance.SetFaceDown(true);
+
+        var interaction = cardInstance.GetComponent<CardInteraction>();
         if (interaction != null) interaction.ownerIndex = playerIndex;
 
-        currentHandObjects.Add(newCard);
+        currentHandObjects.Add(cardInstance);
+        
+        // Wait one frame to sort (helps with network batching)
+        // We call update immediately, but the tweens will handle smoothing
         UpdateHandVisuals();
     }
 
@@ -47,81 +63,102 @@ public class HandVisualizer : MonoBehaviour
         }
     }
 
-    public void ClearPlayedCard()
-    {
-        foreach (Transform child in playSlot) Destroy(child.gameObject);
-    }
-
     public void SortHand()
     {
-        currentHandObjects = currentHandObjects
-            .OrderBy(c => c.Data.suit)
-            .ThenByDescending(c => c.Data.rank) // Sort High to Low usually looks better
-            .ToList();
-
-        for (int i = 0; i < currentHandObjects.Count; i++)
+        SanitizeList();
+        currentHandObjects = currentHandObjects.OrderBy(c => c.Data.suit).ThenByDescending(c => c.Data.rank).ToList();
+        
+        for (int i = 0; i < currentHandObjects.Count; i++) 
         {
-            currentHandObjects[i].transform.SetSiblingIndex(i);
+            if(currentHandObjects[i] != null) 
+                currentHandObjects[i].transform.SetSiblingIndex(i);
         }
         UpdateHandVisuals();
     }
 
-    // --- LOGIC HELPERS ---
-    public bool HasSuit(Suit suitToCheck)
+    private void SanitizeList()
     {
-        return currentHandObjects.Any(c => c.Data.suit == suitToCheck);
-    }
-
-    public bool HasHigherCardInSuit(Suit suit, Rank targetRank)
-    {
-        return currentHandObjects.Any(c => c.Data.suit == suit && c.Data.rank > targetRank);
-    }
-
-    public List<UICard> GetLegalCards(Suit? leadSuit)
-    {
-        if (leadSuit == null) return currentHandObjects;
-        if (HasSuit(leadSuit.Value))
+        for (int i = currentHandObjects.Count - 1; i >= 0; i--)
         {
-            return currentHandObjects.Where(c => c.Data.suit == leadSuit.Value).ToList();
+            // Strict check: If the object is destroyed or the Transform is missing
+            if (currentHandObjects[i] == null || currentHandObjects[i].transform == null)
+            {
+                currentHandObjects.RemoveAt(i);
+            }
         }
-        return currentHandObjects;
     }
 
-    private void UpdateHandVisuals()
+    public void UpdateHandVisuals()
     {
+        SanitizeList();
         int cardCount = currentHandObjects.Count;
         if (cardCount == 0) return;
 
         float centerIndex = (cardCount - 1) / 2f;
+        bool isSidePlayer = (playerIndex == 1 || playerIndex == 3);
 
         for (int i = 0; i < cardCount; i++)
         {
+            var card = currentHandObjects[i];
+            
+            // 1. SKIP INVALID CARDS
+            if (card == null || card.transform == null) continue;
+
+            // 2. STOP OLD TWEENS
+            card.transform.DOKill();
+
             float indexDistanceFromCenter = i - centerIndex;
-            
-            // --- UPDATED LOGIC FOR FLAT LAYOUT ---
-            // If fanSpreadAngle is 0, zRotation becomes 0.
-            // If verticalArch is 0, yPos becomes 0.
-            
             float angleStep = (cardCount > 1) ? fanSpreadAngle / (cardCount - 1) : 0;
-            float zRotation = -indexDistanceFromCenter * angleStep;
+            
+            Vector3 targetPos;
+            Vector3 targetRot;
 
-            float xPos = indexDistanceFromCenter * cardSpacing;
-            float yPos = verticalArch * (1 - Mathf.Pow(indexDistanceFromCenter / (cardCount + 1), 2));
+            if (isSidePlayer)
+            {
+                float sideRotation = (playerIndex == 1) ? 90f : -90f;
+                float archOffset = verticalArch * (1 - Mathf.Pow(indexDistanceFromCenter / (cardCount + 1), 2));
+                float spacingOffset = indexDistanceFromCenter * cardSpacing;
+                if (playerIndex == 1) archOffset = -archOffset;
 
-            currentHandObjects[i].transform.localRotation = Quaternion.Euler(0, 0, zRotation);
-            currentHandObjects[i].transform.localPosition = new Vector3(xPos, yPos, 0);
+                targetPos = new Vector3(archOffset, spacingOffset, 0);
+                targetRot = new Vector3(0, 0, sideRotation - (indexDistanceFromCenter * angleStep));
+            }
+            else
+            {
+                float xPos = indexDistanceFromCenter * cardSpacing;
+                float yPos = verticalArch * (1 - Mathf.Pow(indexDistanceFromCenter / (cardCount + 1), 2));
+                if (playerIndex == 2) yPos = -yPos;
+
+                float zRotation = -indexDistanceFromCenter * angleStep;
+                if (playerIndex == 2) zRotation = -zRotation;
+
+                targetPos = new Vector3(xPos, yPos, 0);
+                targetRot = new Vector3(0, 0, zRotation);
+            }
+
+            // --- CRASH PREVENTION ---
+            // Wrap the animation in Try-Catch. If DOTween fails on one card, 
+            // it won't stop the loop for the others.
+            try
+            {
+                card.transform.DOLocalMove(targetPos, 0.4f).SetEase(Ease.OutCubic);
+                card.transform.DOLocalRotate(targetRot, 0.4f).SetEase(Ease.OutCubic);
+                card.transform.DOScale(Vector3.one, 0.4f).SetEase(Ease.OutBack);
+            }
+            catch
+            {
+                // Just reset position if tween fails
+                if(card != null && card.transform != null)
+                {
+                    card.transform.localPosition = targetPos;
+                    card.transform.localRotation = Quaternion.Euler(targetRot);
+                }
+            }
         }
     }
-    // Add this to HandVisualizer.cs
-    public void ClearHandVisuals()
-    {
-        // 1. Destroy all card GameObjects currently in the list
-        foreach (var card in currentHandObjects)
-        {
-            if (card != null) Destroy(card.gameObject);
-        }
-        
-        // 2. Clear the list references
-        currentHandObjects.Clear();
-    }
+    
+    // Logic Helpers
+    public bool HasSuit(Suit s) => currentHandObjects.Any(c => c != null && c.Data.suit == s);
+    public bool HasHigherCardInSuit(Suit s, Rank r) => currentHandObjects.Any(c => c != null && c.Data.suit == s && c.Data.rank > r);
+    public void ClearHandVisuals() { SanitizeList(); foreach (var c in currentHandObjects) if(c!=null) Destroy(c.gameObject); currentHandObjects.Clear(); }
 }

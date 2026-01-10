@@ -4,73 +4,75 @@ using uVegas.Core.Cards;
 
 namespace uVegas.UI
 {
-    /// <summary>
-    /// Handles the visual representation of a playing card in the UI.
-    /// Think of this as the card's wardrobe: it dresses the card based on its type and theme.
-    /// </summary>
     public class UICard : MonoBehaviour
     {
-        [SerializeField] private Image baseImage;  // The card's background image
-        [SerializeField] private Image rankImage;  // The image representing the card's rank (A, 2, 3, �)
-        [SerializeField] private Image suitImage;  // The image representing the card's suit (hearts, spades, etc.)
-        [SerializeField] private Card currentCard; // The card currently displayed
+        [SerializeField] private Image baseImage;
+        [SerializeField] private Image rankImage; 
+        [SerializeField] private Image suitImage; 
+        [SerializeField] private Card currentCard; 
 
-        private CardTheme currentTheme; // The current theme/style applied to this card
+        private CardTheme currentTheme; 
+        
+        // Helper to check if card is visually hidden
+        public bool IsFaceDown { get; private set; } = false;
 
-        // Inside UICard class
-        public Card Data => currentCard; // <--- Add this property!
+        public Card Data => currentCard; 
 
-        /// <summary>
-        /// Initialize the UI card with a card data and a theme.
-        /// This sets up the visuals according to the card type and chosen theme.
-        /// </summary>
-        /// <param name="card">The card data to display.</param>
-        /// <param name="theme">The visual theme to apply.</param>
         public void Init(Card card, CardTheme theme)
         {
             currentCard = card;
             currentTheme = theme;
-
-            UpdateTheme(); // Apply the visuals immediately
+            UpdateTheme(); 
         }
 
-        /// <summary>
-        /// Updates the card's visuals based on the current card and theme.
-        /// Handles hidden cards, jokers, and normal playing cards.
-        /// </summary>
+        // NEW: Call this to toggle Face Up / Face Down
+        public void SetFaceDown(bool state)
+        {
+            IsFaceDown = state;
+            UpdateTheme();
+        }
+
         private void UpdateTheme()
         {
-            if (currentCard == null) return;
+            if (currentTheme == null) return; // Safety check
 
-            // Handle hidden cards (e.g., face down)
-            if (currentCard.suit == Suit.Hidden)
+            // PRIORITY 1: If it's Face Down or actually Hidden data -> Show Back
+            if (IsFaceDown || currentCard.suit == Suit.Hidden)
             {
                 suitImage.gameObject.SetActive(false);
+                rankImage.gameObject.SetActive(true); // Ensure rank image object is active to show the back pattern
 
                 baseImage.sprite = currentTheme.baseImage;
-                rankImage.sprite = currentTheme.backImage;
-
                 baseImage.color = currentTheme.frontColor;
-                rankImage.color = currentTheme.backColor;
 
+                // Apply the "Back" sprite to the Rank Image slot (common trick) 
+                // or Base Image depending on your prefab setup. 
+                // Assuming standard setup where RankImage sits on top:
+                rankImage.sprite = currentTheme.backImage;
+                rankImage.color = currentTheme.backColor;
+                
+                // If your prefab uses baseImage for the back, swap the logic above.
                 return;
             }
 
-            // Handle jokers (special cards)
+            // PRIORITY 2: Joker
             if (currentCard.suit == Suit.Joker)
             {
                 suitImage.gameObject.SetActive(false);
+                rankImage.gameObject.SetActive(true);
 
                 baseImage.sprite = currentTheme.baseImage;
                 baseImage.color = currentTheme.frontColor;
 
                 rankImage.sprite = currentTheme.jokerImage;
                 rankImage.color = currentTheme.jokerColor;
-
                 return;
             }
 
-            // Normal cards (hearts, spades, etc.)
+            // PRIORITY 3: Normal Card
+            suitImage.gameObject.SetActive(true);
+            rankImage.gameObject.SetActive(true);
+
             baseImage.sprite = currentTheme.baseImage;
             baseImage.color = currentTheme.frontColor;
 
@@ -79,30 +81,22 @@ namespace uVegas.UI
 
             if (rankEntry.HasValue)
             {
-                RankEntry rank = rankEntry.Value;
-                rankImage.sprite = rank.image;
-                rankImage.color = currentTheme.rankColor; // Standard color for ranks
+                rankImage.sprite = rankEntry.Value.image;
+                rankImage.color = currentTheme.rankColor; 
             }
 
             if (suitEntry.HasValue)
             {
-                SuitEntry suit = suitEntry.Value;
-                suitImage.sprite = suit.image;
-                suitImage.color = suit.color; // Each suit can have its own color
+                suitImage.sprite = suitEntry.Value.image;
+                suitImage.color = suitEntry.Value.color; 
             }
         }
 
-        /// <summary>
-        /// Reveal a hidden card by initializing it with new card data.
-        /// If the card is already visible, this does nothing.
-        /// </summary>
-        /// <param name="card">The card to reveal.</param>
         public void Reveal(Card card)
         {
-            if (currentCard.suit == Suit.Hidden)
-            {
-                Init(card, currentTheme);
-            }
+            // If revealed, we update data and force face up
+            currentCard = card;
+            SetFaceDown(false);
         }
     }
 }
