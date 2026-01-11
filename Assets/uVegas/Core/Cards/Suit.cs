@@ -6,9 +6,9 @@ namespace uVegas.Core.Cards
     /// </summary>
     public enum Suit
     {
-        Hearts,   // Classic red heart
+        Clubs,   // Classic red heart
         Diamonds, // Classic red diamond
-        Clubs,    // Classic black club
+        Hearts,    // Classic black club
         Spades,   // Classic black spade
         Hidden,   // Used when the card is face down
         Joker     // Special card suit: Joker

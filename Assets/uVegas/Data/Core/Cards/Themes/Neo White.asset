@@ -47,18 +47,18 @@ MonoBehaviour:
   - rank: 14
     image: {fileID: 21300000, guid: 1c05d2356efa5b1498ecb154a7488c62, type: 3}
   suits:
-  - suit: 3
-    image: {fileID: 21300000, guid: 70c62b3a0b2cbe945911f94468a9105b, type: 3}
-    color: {r: 0, g: 0, b: 0, a: 1}
-  - suit: 2
-    image: {fileID: 21300000, guid: 11f52750d3ab3de47818dfab02bf3e03, type: 3}
-    color: {r: 0, g: 0, b: 0, a: 1}
   - suit: 0
     image: {fileID: 21300000, guid: fceef5807e37a9c4e88987780033c001, type: 3}
     color: {r: 0.7283019, g: 0, b: 0, a: 1}
   - suit: 1
     image: {fileID: 21300000, guid: 39acf8c691dda444497738f54904a1be, type: 3}
     color: {r: 0.7294118, g: 0, b: 0, a: 1}
+  - suit: 2
+    image: {fileID: 21300000, guid: 11f52750d3ab3de47818dfab02bf3e03, type: 3}
+    color: {r: 0, g: 0, b: 0, a: 1}
+  - suit: 3
+    image: {fileID: 21300000, guid: 70c62b3a0b2cbe945911f94468a9105b, type: 3}
+    color: {r: 0, g: 0, b: 0, a: 1}
   - suit: 4
     image: {fileID: 0}
     color: {r: 0, g: 0, b: 0, a: 1}
