@@ -308,38 +308,38 @@ public class GameController : NetworkBehaviour
     }
 
     // New Function to handle AI Moves
-void PlayBotTurn(int pIdx)
-{
-    var playerHandObj = players[pIdx].currentHandObjects;
-    var handData = playerHandObj.Select(c => c.Data).ToList();
-    
-    // SAFETY: If bot has no cards, stop.
-    if (handData.Count == 0) return;
-
-    var table = GetTableCards();
-
-    // 1. Get Legal Moves
-    var legalMoves = BotAI.GetLegalMoves(handData, table, leadSuit, (Suit)netCurrentTrump.Value);
-    
-    // Fallback if AI returns nothing (shouldn't happen, but safe to handle)
-    if (legalMoves.Count == 0) legalMoves = handData; 
-
-    // 2. Pick Card
-    Card bestCard = legalMoves[Random.Range(0, legalMoves.Count)];
-
-    // 3. Find the visual object
-    // SAFETY: Ensure the card actually exists in the visual hand before playing
-    var cardObjToPlay = playerHandObj.FirstOrDefault(c => c.Data.suit == bestCard.suit && c.Data.rank == bestCard.rank);
-
-    if (cardObjToPlay != null)
+    void PlayBotTurn(int pIdx)
     {
-        PlayCardLogic(pIdx, cardObjToPlay);
+        var playerHandObj = players[pIdx].currentHandObjects;
+        var handData = playerHandObj.Select(c => c.Data).ToList();
+
+        // SAFETY: If bot has no cards, stop.
+        if (handData.Count == 0) return;
+
+        var table = GetTableCards();
+
+        // 1. Get Legal Moves
+        var legalMoves = BotAI.GetLegalMoves(handData, table, leadSuit, (Suit)netCurrentTrump.Value);
+
+        // Fallback if AI returns nothing (shouldn't happen, but safe to handle)
+        if (legalMoves.Count == 0) legalMoves = handData;
+
+        // 2. Pick Card
+        Card bestCard = legalMoves[Random.Range(0, legalMoves.Count)];
+
+        // 3. Find the visual object
+        // SAFETY: Ensure the card actually exists in the visual hand before playing
+        var cardObjToPlay = playerHandObj.FirstOrDefault(c => c.Data.suit == bestCard.suit && c.Data.rank == bestCard.rank);
+
+        if (cardObjToPlay != null)
+        {
+            PlayCardLogic(pIdx, cardObjToPlay);
+        }
+        else
+        {
+            Debug.LogError($"Bot {pIdx} tried to play {bestCard.rank} of {bestCard.suit}, but didn't have it!");
+        }
     }
-    else
-    {
-        Debug.LogError($"Bot {pIdx} tried to play {bestCard.rank} of {bestCard.suit}, but didn't have it!");
-    }
-}
     void PlayCardLogic(int playerIndex, UICard card)
     {
         if (cardsPlayedInTrick == 0) leadSuit = card.Data.suit;
@@ -381,6 +381,7 @@ void PlayBotTurn(int pIdx)
         netCurrentHighestBid.Value = 0;
         netHighestBidderIndex.Value = -1;
 
+        // Round 1 is always Spades (standard Callbreak rules often dictate this)
         if (round == 1)
         {
             netCurrentTrump.Value = (int)Suit.Spades;
@@ -390,41 +391,47 @@ void PlayBotTurn(int pIdx)
         }
 
         int start = (netDealerIndex.Value + 1) % 4;
+
+        // Give everyone one chance to bid (or pass)
         for (int k = 0; k < 4; k++)
         {
             int pIdx = (start + k) % 4;
-            var p = players[pIdx];
-
-            // Check if Bot
-            // Inside IEnumerator RunAuction(int round)...
 
             if (isBot[pIdx])
             {
-                // FIX: Realistic bidding (Range 1 to 5, not multiples of 5)
-                // Bots usually won't bid higher than 4 or 5 unless they have an amazing hand.
-                // We compare against the current highest bid to see if they want to raise.
+                // 1. Get Bot's Hand Data
+                var handObjects = players[pIdx].currentHandObjects;
+                var handData = handObjects.Select(h => h.Data).ToList();
 
+                // 2. Ask AI: "What is the max I am willing to bid?"
+                // This returns 0 if hand is weak, or 5-8 if they have a strong suit
+                int maxWillingToBid = BotAI.CalculateAuctionBid(handData);
+
+                // 3. Determine current cost to enter
                 int currentHighest = netCurrentHighestBid.Value;
-                int maxWillingToBid = Random.Range(2, 6); // Bots randomly decide their "limit" is 2-5
+                int minRequired = 5; // Rule: Must bid at least 5 to change suit
 
-                // Only bid if our limit is higher than the current highest bid
-                if (maxWillingToBid > currentHighest)
+                // If current is 0, price is 5. If current is 5, price is 6.
+                int costToBid = (currentHighest < minRequired) ? minRequired : (currentHighest + 1);
+
+                // 4. Decision: Do I have enough strength?
+                if (maxWillingToBid >= costToBid)
                 {
-                    // Raise by 1 over the current highest
-                    int newBid = currentHighest + 1;
-                    netCurrentHighestBid.Value = newBid;
+                    // Bid the minimum necessary to take the lead (not our max immediately)
+                    netCurrentHighestBid.Value = costToBid;
                     netHighestBidderIndex.Value = pIdx;
-                    UpdateBidUIClientRpc(pIdx, newBid.ToString());
+                    UpdateBidUIClientRpc(pIdx, costToBid.ToString());
+                    yield return new WaitForSeconds(1.0f);
                 }
                 else
                 {
                     UpdateBidUIClientRpc(pIdx, "Pass");
+                    yield return new WaitForSeconds(0.5f);
                 }
-                yield return new WaitForSeconds(0.5f);
             }
             else
             {
-                // Human Auction
+                // Human Logic (Unchanged)
                 humanInputReceived = false;
                 ShowAuctionUIClientRpc(pIdx, netCurrentHighestBid.Value, netHighestBidderIndex.Value);
                 yield return new WaitUntil(() => humanInputReceived);
@@ -432,20 +439,40 @@ void PlayBotTurn(int pIdx)
             }
         }
 
-        // Suit Selection Phase
+        // --- SUIT SELECTION PHASE ---
         if (netHighestBidderIndex.Value != -1)
         {
             int winnerIdx = netHighestBidderIndex.Value;
+            Suit selectedSuit = Suit.Spades;
+
             if (isBot[winnerIdx])
             {
-                // Bot Picks Suit (Random for now)
-                Suit picked = (Suit)Random.Range(0, 4);
-                netCurrentTrump.Value = (int)picked;
-                UpdateTrumpUIClientRpc(picked);
+                // SMART BOT: Pick the suit they actually have cards for!
+                var handObjects = players[winnerIdx].currentHandObjects;
+                var handData = handObjects.Select(h => h.Data).ToList();
+
+                // Group cards by suit
+                var groups = handData.GroupBy(c => c.suit).OrderByDescending(g => g.Count());
+
+                // Pick the suit with the most cards (that isn't Spades, usually)
+                // If BotAI.CalculateAuctionBid suggested a bid, it found a specific suit.
+                // For simplicity, we just pick their longest non-Spade suit here.
+                foreach (var g in groups)
+                {
+                    if (g.Key != Suit.Spades)
+                    {
+                        selectedSuit = g.Key;
+                        break;
+                    }
+                }
+
+                netCurrentTrump.Value = (int)selectedSuit;
+                UpdateTrumpUIClientRpc(selectedSuit);
                 yield return new WaitForSeconds(1f);
             }
             else
             {
+                // Human Selection
                 humanInputReceived = false;
                 ShowSuitSelectUIClientRpc(winnerIdx);
                 yield return new WaitUntil(() => humanInputReceived);
@@ -453,36 +480,62 @@ void PlayBotTurn(int pIdx)
         }
         else
         {
+            // No one bid -> Default to Spades
             netCurrentTrump.Value = (int)Suit.Spades;
+            UpdateTrumpUIClientRpc(Suit.Spades);
         }
-        UpdateTrumpUIClientRpc((Suit)netCurrentTrump.Value);
     }
 
     IEnumerator RunFinalBids()
     {
         uiManager.ClearAllBids();
         int start = (netDealerIndex.Value + 1) % 4;
+
         for (int k = 0; k < 4; k++)
         {
             int pIdx = (start + k) % 4;
-            int min = 2;
+
+            // Determine the minimum bid allowed for this player
+            // (If they won the auction with a bid of 6, they MUST bid at least 6 now)
+            int minAllowed = 2; // Standard minimum
             if (pIdx == netHighestBidderIndex.Value && netCurrentHighestBid.Value > 2)
-                min = netCurrentHighestBid.Value;
+                minAllowed = netCurrentHighestBid.Value;
 
             if (isBot[pIdx])
             {
-                // Bot Final Bid Logic
-                int b = Mathf.Max(min, Random.Range(2, 5)); // Placeholder
-                finalBids[pIdx] = b;
-                UpdateBidUIClientRpc(pIdx, b.ToString());
+                // 1. Get Hand Data
+                var handObjects = players[pIdx].currentHandObjects;
+                var handData = handObjects.Select(h => h.Data).ToList();
+
+                // 2. Ask AI: "How many tricks can I win?"
+                // We pass the currently selected trump suit so it values those cards higher
+                Suit currentTrump = (Suit)netCurrentTrump.Value;
+                int calculatedBid = BotAI.CalculateFinalBid(handData, currentTrump);
+
+                // 3. Enforce Rules
+                // Bid cannot be lower than the auction commitment or game min (2)
+                int finalBid = Mathf.Max(calculatedBid, minAllowed);
+
+                // Cap at 13 just in case
+                finalBid = Mathf.Min(finalBid, 13);
+
+                // 4. Save and Update UI
+                finalBids[pIdx] = finalBid;
+                UpdateBidUIClientRpc(pIdx, finalBid.ToString());
                 yield return new WaitForSeconds(0.5f);
             }
             else
             {
+                // Human Logic (Unchanged)
                 humanInputReceived = false;
-                ShowFinalBidUIClientRpc(pIdx, min);
+                ShowFinalBidUIClientRpc(pIdx, minAllowed);
                 yield return new WaitUntil(() => humanInputReceived);
+
+                // Sync the human's choice to the network var/array
+                // (Assumed handled by SubmitBidServerRpc inside OnHumanFinalBidSubmitted)
             }
+
+            // Ensure the UI reflects the final stored value
             UpdateBidUIClientRpc(pIdx, finalBids[pIdx].ToString());
         }
     }

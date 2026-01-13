@@ -1,59 +1,51 @@
 using UnityEngine;
-using Unity.Netcode;
 using UnityEngine.UI;
+using TMPro;
 
 public class NetworkMenuUI : MonoBehaviour
 {
-    [SerializeField] private Button hostBtn;
-    [SerializeField] private Button joinBtn;
-    [SerializeField] private Button startMatchBtn;
-    
-    // Reference to your GameController to start the actual round
-    [SerializeField] private GameController gameController;
+    [Header("UI References")]
+    public TMP_InputField joinCodeInput;
+    public Button hostButton;
+    public Button joinButton;
+    public TextMeshProUGUI statusText; // To show the Join Code to the host
 
-    void Start()
+    private async void Start()
     {
-        // 1. Host Button Click
-        hostBtn.onClick.AddListener(() => 
-        {
-            NetworkManager.Singleton.StartHost();
-            SetupHostUI();
-        });
-
-        // 2. Join Button Click
-        joinBtn.onClick.AddListener(() => 
-        {
-            NetworkManager.Singleton.StartClient();
-            SetupClientUI();
-        });
-
-        // 3. Start Match Button (Host Only)
-        // Hidden by default, shown only after hosting
-        startMatchBtn.gameObject.SetActive(false); 
-        startMatchBtn.onClick.AddListener(() => 
-        {
-            gameController.StartGame();
-            // Hide the connection panel entirely once game starts
-            gameObject.SetActive(false);
-        });
-    }
-
-    void SetupHostUI()
-    {
-        Debug.Log("Host Started. Waiting for players...");
-        // Hide Host/Join buttons
-        hostBtn.gameObject.SetActive(false);
-        joinBtn.gameObject.SetActive(false);
+        // Initialize services as soon as the menu starts
+        await MultiplayerSessionManager.Instance.InitializeServices();
         
-        // Show the "Start Match" button so the Host can decide when to begin
-        startMatchBtn.gameObject.SetActive(true);
+        hostButton.onClick.AddListener(OnHostClicked);
+        joinButton.onClick.AddListener(OnJoinClicked);
     }
 
-    void SetupClientUI()
+    private async void OnHostClicked()
     {
-        Debug.Log("Client Started. Waiting for Host to start game...");
-        // Hide everything and show a waiting text if you have one
-        gameObject.SetActive(false); 
-        // Or keep it active with a text saying "Waiting for Host..."
+        statusText.text = "Creating Session...";
+        string code = await MultiplayerSessionManager.Instance.StartHostAsync();
+        
+        if (!string.IsNullOrEmpty(code))
+        {
+            statusText.text = $"Session Code: {code}";
+            // Copy code to clipboard for easy sharing
+            GUIUtility.systemCopyBuffer = code; 
+        }
+        else
+        {
+            statusText.text = "Failed to create session.";
+        }
+    }
+
+    private async void OnJoinClicked()
+    {
+        string code = joinCodeInput.text;
+        if (string.IsNullOrEmpty(code))
+        {
+            statusText.text = "Please enter a code.";
+            return;
+        }
+
+        statusText.text = "Joining...";
+        await MultiplayerSessionManager.Instance.JoinByCodeAsync(code);
     }
 }
