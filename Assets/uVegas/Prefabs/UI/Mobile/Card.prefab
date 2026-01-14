@@ -238,9 +238,9 @@ GameObject:
   - component: {fileID: 3914486261038160957}
   - component: {fileID: 5536103914741403349}
   - component: {fileID: 5722564916945625111}
-  - component: {fileID: -6280417727802780004}
   - component: {fileID: 124378166083117619}
   - component: {fileID: 5473140285970554184}
+  - component: {fileID: 4456913800863714491}
   m_Layer: 5
   m_Name: Card
   m_TagString: Untagged
@@ -327,19 +327,6 @@ MonoBehaviour:
   currentCard:
     suit: 0
     rank: 0
---- !u!114 &-6280417727802780004
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3200694447043404655}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 142dc1d9b30193a4c8970e8327a838b6, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CardInteraction
-  ownerIndex: 0
 --- !u!114 &124378166083117619
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -377,6 +364,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 90c13545b07172c48b872dc54272f88c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CardNetworkSync
+  ShowTopMostFoldoutHeaderGroup: 1
+  netOwnerIndex:
+    m_InternalValue: -1
+  netSuit:
+    m_InternalValue: 0
+  netRank:
+    m_InternalValue: 0
+--- !u!114 &4456913800863714491
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3200694447043404655}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 142dc1d9b30193a4c8970e8327a838b6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CardInteraction
 --- !u!1 &5323047181356748486
 GameObject:
   m_ObjectHideFlags: 0

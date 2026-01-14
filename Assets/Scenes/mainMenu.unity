@@ -132,7 +132,7 @@ GameObject:
   - component: {fileID: 57690166}
   - component: {fileID: 57690165}
   m_Layer: 5
-  m_Name: Online Multiplayer
+  m_Name: btn_online
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -828,7 +828,7 @@ GameObject:
   - component: {fileID: 1174418690}
   - component: {fileID: 1174418689}
   m_Layer: 5
-  m_Name: Local LAN
+  m_Name: btn_LAN
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1256,7 +1256,7 @@ GameObject:
   - component: {fileID: 1886791235}
   - component: {fileID: 1886791234}
   m_Layer: 5
-  m_Name: Single Player (vs AI)
+  m_Name: btn_single
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

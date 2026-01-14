@@ -10,133 +10,142 @@ public static class BotAI
     private const int POINT_QUEEN = 2;
     private const int POINT_JACK = 1;
 
-    // --- STRICT RULE ENGINE ---
-    public static List<Card> GetLegalMoves(List<Card> hand, List<Card> tableCards, Suit? leadSuit, Suit trumpSuit)
+    // --------------------------------------------------------------------------------
+    // 1. RULE ENGINE (Validates Human & Bot Moves)
+    // --------------------------------------------------------------------------------
+    public static List<Card> GetLegalMoves(List<Card> hand, List<Card> table, Suit? leadSuit, Suit trumpSuit)
     {
-        // 1. LEAD: Anything goes
-        if (leadSuit == null)
-            return hand;
+        // If leading (empty table), any card is valid
+        if (leadSuit == null) return new List<Card>(hand);
 
-        Suit currentSuit = leadSuit.Value;
-        var cardsOfLeadSuit = hand.Where(c => c.suit == currentSuit).ToList();
+        // 1. Check if we have cards of the Lead Suit
+        var myLeadCards = hand.Where(c => c.suit == leadSuit).ToList();
 
-        // 2. HAS LEAD SUIT? -> MUST FOLLOW
-        if (cardsOfLeadSuit.Count > 0)
+        if (myLeadCards.Count > 0)
         {
-            var tableLeadCards = tableCards.Where(c => c.suit == currentSuit).ToList();
+            // Determine who is currently winning the table
+            Card currentWinner = GetCurrentWinner(table, leadSuit.Value, trumpSuit);
+            bool isTrumped = currentWinner != null && currentWinner.suit == trumpSuit;
 
-            // Try to beat the highest card of the lead suit on the table
-            if (tableLeadCards.Count > 0)
+            // --- THE FIX: SMART DISCARD RULE ---
+            // If the trick is already trumped (by someone else), and the Lead suit is NOT Trump:
+            // It is impossible for a lead-suit card to win. 
+            // Therefore, you are not forced to play a high card. You can play ANY card of the lead suit.
+            if (isTrumped && leadSuit != trumpSuit)
             {
-                int maxRankOnTable = tableLeadCards.Max(c => (int)c.rank);
-                var winningMoves = cardsOfLeadSuit.Where(c => (int)c.rank > maxRankOnTable).ToList();
-
-                // Rule: If you can win the suit, you MUST play the winner
-                if (winningMoves.Count > 0)
-                    return winningMoves;
+                return myLeadCards;
             }
 
-            // If you can't win, play any card of the lead suit
-            return cardsOfLeadSuit;
-        }
-
-        // 3. VOID IN LEAD SUIT
-        var trumps = hand.Where(c => c.suit == trumpSuit).ToList();
-
-        // If I have no trumps, I can play anything
-        if (trumps.Count == 0)
-            return hand;
-
-        // Check if the trick is currently being won by a Trump
-        var tableTrumps = tableCards.Where(c => c.suit == trumpSuit).ToList();
-
-        if (tableTrumps.Count > 0)
-        {
-            // SOMEONE ELSE ALREADY TRUMPED
-            int maxTrumpRank = tableTrumps.Max(c => (int)c.rank);
-
-            // Check if I can OVER-TRUMP (Beat the current highest trump)
-            var winningTrumps = trumps.Where(c => (int)c.rank > maxTrumpRank).ToList();
-
-            if (winningTrumps.Count > 0)
+            // Otherwise (Trick is NOT trumped), Standard Rule applies:
+            // "You must beat the current highest card if possible."
+            if (currentWinner != null)
             {
-                // Rule: Must try to win if possible
-                return winningTrumps;
+                var higherCards = myLeadCards.Where(c => c.rank > currentWinner.rank).ToList();
+                if (higherCards.Count > 0)
+                {
+                    return higherCards; // Force player to try to win
+                }
             }
-            else
-            {
-                // USER RULE REQUEST: 
-                // I have trumps, but they are all LOWER than the current winner.
-                // I am NOT forced to waste a trump. I can play ANY card.
-                return hand;
-            }
+
+            // If we can't beat it, we must still follow suit (play any lead card)
+            return myLeadCards;
         }
-        else
+
+        // 2. If we are void (don't have lead suit):
+        // Standard Rule: Must play Trump if available
+        var myTrumpCards = hand.Where(c => c.suit == trumpSuit).ToList();
+        if (myTrumpCards.Count > 0)
         {
-            // NO ONE HAS TRUMPED YET -> I MUST TRUMP
-            return trumps;
+            // Simple Rule: Just playing a trump is enough (you don't strictly have to over-trump, though bots usually try)
+            return myTrumpCards;
         }
+
+        // 3. Neither lead nor trump: Play anything (Discard)
+        return new List<Card>(hand);
     }
 
-    // --- STRATEGY: PLAYING A CARD ---
+    // --------------------------------------------------------------------------------
+    // 2. BOT STRATEGY (Playing the actual card)
+    // --------------------------------------------------------------------------------
     public static Card ChooseCardToPlay(List<Card> hand, List<Card> tableCards, Suit? leadSuit, Suit trumpSuit)
     {
+        // If we are leading (Table empty)
         if (leadSuit == null)
         {
-            // Simple Lead Logic
+            // Strategy: Play highest card to guarantee a win
+            // (Improvements could be made here to lead "long" suits, but this is solid basic play)
             return hand.OrderByDescending(c => c.rank).First();
         }
 
         List<Card> legalMoves = GetLegalMoves(hand, tableCards, leadSuit, trumpSuit);
-
         Card currentWinner = GetCurrentWinner(tableCards, leadSuit.Value, trumpSuit);
+        bool isTrumped = currentWinner != null && currentWinner.suit == trumpSuit;
 
-        // Strategy: 
-        // 1. Can I win? Pick lowest winning card.
-        // 2. Can't win? Dump lowest garbage card.
+        // --- STRATEGY 1: FOLLOWING SUIT ---
+        if (legalMoves[0].suit == leadSuit)
+        {
+            // Scenario A: The trick is already Trumped
+            if (isTrumped && leadSuit != trumpSuit)
+            {
+                // I can't win. Dump my LOWEST card to save high ones for later.
+                return legalMoves.OrderBy(c => c.rank).First();
+            }
 
-        var winningMoves = legalMoves.Where(c => BeatCard(c, currentWinner, leadSuit.Value, trumpSuit)).OrderBy(c => c.rank).ToList();
+            // Scenario B: Trick is NOT trumped. Can I win?
+            // Find the smallest card that is still higher than the current winner.
+            var winningCards = legalMoves.Where(c => c.rank > currentWinner.rank).OrderBy(c => c.rank).ToList();
 
-        if (winningMoves.Count > 0)
-            return winningMoves[0];
+            if (winningCards.Count > 0)
+            {
+                return winningCards[0]; // Win cheaply (e.g. play Queen on a 10, save Ace)
+            }
+            else
+            {
+                // I can't win. Dump lowest card.
+                return legalMoves.OrderBy(c => c.rank).First();
+            }
+        }
 
-        // Dump lowest card
+        // --- STRATEGY 2: TRUMPING ---
+        if (legalMoves[0].suit == trumpSuit)
+        {
+            // If someone else already trumped, try to beat them
+            if (isTrumped)
+            {
+                var winningTrumps = legalMoves.Where(c => c.rank > currentWinner.rank).OrderBy(c => c.rank).ToList();
+                if (winningTrumps.Count > 0) return winningTrumps[0];
+            }
+            
+            // Otherwise play lowest available trump (save big trumps)
+            return legalMoves.OrderBy(c => c.rank).First();
+        }
+
+        // --- STRATEGY 3: DISCARDING (Trash) ---
+        // If playing off-suit (no lead, no trump), get rid of lowest garbage card
         return legalMoves.OrderBy(c => c.rank).First();
     }
 
-    // --- AUCTION STRATEGIES ---
-
-    // --- SMART AUCTION LOGIC ---
+    // --------------------------------------------------------------------------------
+    // 3. AUCTION STRATEGIES (Bidding for Trump)
+    // --------------------------------------------------------------------------------
     public static int CalculateAuctionBid(List<Card> hand)
     {
         int maxBid = 0;
-
-        // We evaluate Clubs, Diamonds, and Hearts as potential "Power Suits"
-        // (Spades is the default, so we don't bid to change it to Spades)
         Suit[] candidates = { Suit.Clubs, Suit.Diamonds, Suit.Hearts };
 
         foreach (Suit potentialTrump in candidates)
         {
-            // 1. Calculate how strong our hand becomes if THIS suit is Trump
             float predictedTricks = EvaluateHandStrength(hand, potentialTrump);
 
-            // 2. Apply the "Risk" Rule
-            // User Rule: "If I have 4 sure tricks, I can risk bidding 5 to change power."
-            // Logic: If strength is 4.2, Bid = 5. If strength is 5.1, Bid = 6.
+            // Risk Rule: If strength is > 4, bid aggressively to take control
             if (predictedTricks >= 4.0f)
             {
-                // Risk Strategy: Bid 1 higher than our sure count
-                // (Because becoming the Power Suit gives us control)
                 int riskBid = Mathf.FloorToInt(predictedTricks) + 1;
+                riskBid = Mathf.Min(riskBid, 8); // Cap at 8
 
-                // Cap bid at 8 for safety (unless you want aggressive bots)
-                riskBid = Mathf.Min(riskBid, 8);
-
-                if (riskBid > maxBid)
-                    maxBid = riskBid;
+                if (riskBid > maxBid) maxBid = riskBid;
             }
         }
-
         return maxBid;
     }
 
@@ -150,27 +159,24 @@ public static class BotAI
             if (card.suit == trumpSuit)
             {
                 trumpCount++;
-                // Trump High Cards are extremely valuable
                 if (card.rank == Rank.Ace) points += 1.0f;
-                else if (card.rank == Rank.King) points += 1.0f; // King of Trump is solid
+                else if (card.rank == Rank.King) points += 1.0f;
                 else if (card.rank == Rank.Queen) points += 0.5f;
             }
             else
             {
-                // Side Suit High Cards
-                if (card.rank == Rank.Ace) points += 1.0f;       // Ace is almost definite
-                else if (card.rank == Rank.King) points += 0.8f; // King is likely (0.8)
+                if (card.rank == Rank.Ace) points += 1.0f;
+                else if (card.rank == Rank.King) points += 0.8f;
             }
         }
-
-        // Bonus for Trump Length (The "Control" Factor)
-        // Even small trumps (like a 5 of Hearts) can win if you cut someone else.
-        // We add 0.25 points for every trump card we hold.
+        // Bonus for Trump Length
         points += (trumpCount * 0.25f);
-
         return points;
     }
-    // --- FINAL TRICK PREDICTION ---
+
+    // --------------------------------------------------------------------------------
+    // 4. FINAL TRICK PREDICTION (Game Start)
+    // --------------------------------------------------------------------------------
     public static int CalculateFinalBid(List<Card> hand, Suit trumpSuit)
     {
         float tricks = 0;
@@ -179,45 +185,60 @@ public static class BotAI
         foreach (var card in hand)
         {
             if (card.rank == Rank.Ace) tricks += 1.0f;
-            else if (card.rank == Rank.King) tricks += 0.75f; // King is strong but not guaranteed
+            else if (card.rank == Rank.King) tricks += 0.75f; 
             else if (card.rank == Rank.Queen) tricks += 0.25f;
         }
 
-        // 2. Trump Length Strength (Extra trumps usually win tricks)
+        // 2. Trump Length Strength 
         int trumpCount = hand.Count(c => c.suit == trumpSuit);
         if (trumpCount >= 4)
         {
             tricks += (trumpCount - 3) * 0.8f;
         }
 
-        // 3. Void/Singleton Strength (Ability to cut other suits)
+        // 3. Void/Singleton Strength
         var groups = hand.GroupBy(c => c.suit);
         foreach (var g in groups)
         {
             if (g.Key == trumpSuit) continue;
-
-            // If we have 0 or 1 card of a side suit, we can likely ruff (trump) it later
-            if (g.Count() == 0) tricks += 1.0f;
-            else if (g.Count() == 1) tricks += 0.5f;
+            if (g.Count() == 0) tricks += 1.0f;      // Void
+            else if (g.Count() == 1) tricks += 0.5f; // Singleton
         }
 
-        // Clamp between 2 and 13
         return Mathf.Clamp(Mathf.RoundToInt(tricks), 2, 13);
     }
 
-    // --- HELPERS ---
-    private static int CountHighCardPoints(List<Card> cards)
+    // --------------------------------------------------------------------------------
+    // 5. HELPER: DETERMINE WINNER
+    // --------------------------------------------------------------------------------
+    private static Card GetCurrentWinner(List<Card> tableCards, Suit leadSuit, Suit trumpSuit)
     {
-        int p = 0;
-        foreach (var c in cards)
+        if (tableCards == null || tableCards.Count == 0) return null;
+
+        Card winner = tableCards[0];
+
+        foreach (var card in tableCards.Skip(1))
         {
-            if (c.rank >= Rank.Jack) p += (int)c.rank - 10;
+            // 1. If new card is Trump...
+            if (card.suit == trumpSuit)
+            {
+                // If winner was not trump, new card wins
+                if (winner.suit != trumpSuit) winner = card;
+                // If winner was also trump, higher rank wins
+                else if (card.rank > winner.rank) winner = card;
+            }
+            // 2. If new card is Lead Suit (and winner is not Trump)...
+            else if (card.suit == leadSuit && winner.suit != trumpSuit)
+            {
+                if (card.rank > winner.rank) winner = card;
+            }
         }
-        return p;
+        return winner;
     }
 
     private static bool BeatCard(Card challenger, Card currentWinner, Suit leadSuit, Suit trumpSuit)
     {
+        // Simple helper to check if challenger > winner
         if (currentWinner.suit == trumpSuit)
             return (challenger.suit == trumpSuit && challenger.rank > currentWinner.rank);
 
@@ -227,18 +248,5 @@ public static class BotAI
             return (challenger.suit == leadSuit && challenger.rank > currentWinner.rank);
 
         return false;
-    }
-
-    private static Card GetCurrentWinner(List<Card> tableCards, Suit leadSuit, Suit trumpSuit)
-    {
-        if (tableCards.Count == 0) return new Card(leadSuit, Rank.Two);
-
-        Card winner = tableCards[0];
-        for (int i = 1; i < tableCards.Count; i++)
-        {
-            if (BeatCard(tableCards[i], winner, leadSuit, trumpSuit))
-                winner = tableCards[i];
-        }
-        return winner;
     }
 }
