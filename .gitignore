@@ -10,6 +10,7 @@ UserSettings/
 # ========== IDE ==========
 .vs/
 .vscode/
+.utmp/
 *.csproj
 *.sln
 *.slnx

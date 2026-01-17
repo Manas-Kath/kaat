@@ -27,6 +27,9 @@ public class GameController : NetworkBehaviour
     [HideInInspector] public HandVisualizer[] players;
     private List<Card> deck = new List<Card>();
 
+    // LOGICAL TRACKER (Instant, unlike the UI)
+    private List<Card> serverTrickCards = new List<Card>();
+
     public int localPlayerIndex = -1;
 
     // --- NETWORKED STATE ---
@@ -46,6 +49,9 @@ public class GameController : NetworkBehaviour
     public int[] finalBids = new int[4];
     public int[] tricksWon = new int[4];
 
+    // --- FIX: PLAYER NAMES CACHE ---
+    private string[] networkedNames = new string[] { "Player 0", "Player 1", "Player 2", "Player 3" };
+
     private bool[] isBot = new bool[4];
 
     private int cardsPlayedInTrick = 0;
@@ -62,7 +68,7 @@ public class GameController : NetworkBehaviour
 
     private void Awake()
     {
-        Instance = this; 
+        Instance = this;
     }
 
     void Start()
@@ -88,11 +94,14 @@ public class GameController : NetworkBehaviour
         if (started)
         {
             isBot[0] = false; isBot[1] = true; isBot[2] = true; isBot[3] = true;
-            
+
+            // --- FIX: Set Bot Names ---
+            networkedNames = new string[] { ConnectionManager.LocalPlayerName, "Bot 1", "Bot 2", "Bot 3" };
+
             // Single Player bypasses the "Start Match" button, so we swap UI manually here
             if (connectionPanel != null) connectionPanel.SetActive(false);
             if (gameUIPanel != null) gameUIPanel.SetActive(true);
-            
+
             StartGame();
         }
     }
@@ -110,27 +119,27 @@ public class GameController : NetworkBehaviour
             players[i] = visualHands[visualIndex];
             players[i].playerIndex = i;
             players[i].layoutId = visualIndex;
-            players[i].isHuman = true;
+            players[i].isHuman = (i == localPlayerIndex);
             players[i].ClearHandVisuals();
         }
-        
-        // --- FIX: REMOVED UI HIDING HERE ---
-        // We stay in the "Connection Panel" until the Host clicks "Start Match".
+
+        // --- FIX: REGISTER NAME ---
+        // Send our name to the server so it can update the scoreboard
+        if (IsClient)
+        {
+            RegisterNameServerRpc(ConnectionManager.LocalPlayerName, localPlayerIndex);
+        }
     }
 
     // --------------------------------------------------------------------------------
     // 2. START MATCH TRIGGERS (NEW)
     // --------------------------------------------------------------------------------
 
-    // Call this from ConnectionManager when Host clicks "Start Match"
     public void StartMultiplayerMatch()
     {
         if (IsServer)
         {
-            // 1. Tell all clients (and self) to hide Lobby and show Game UI
             StartGameClientRpc();
-            
-            // 2. Begin the actual game loop logic
             StartGame();
         }
     }
@@ -138,7 +147,6 @@ public class GameController : NetworkBehaviour
     [ClientRpc]
     private void StartGameClientRpc()
     {
-        // This ensures everyone flips the switch at the same time
         if (connectionPanel != null) connectionPanel.SetActive(false);
         if (gameUIPanel != null) gameUIPanel.SetActive(true);
     }
@@ -151,6 +159,15 @@ public class GameController : NetworkBehaviour
         {
             isGameRunning = true;
             netDealerIndex.Value = Random.Range(0, 4);
+
+            // --- FIX: SYNC NAMES ---
+            // Send the collected names to all clients' scoreboards
+            // (Pass elements individually to avoid array serialization errors)
+            SyncNamesClientRpc(networkedNames[0], networkedNames[1], networkedNames[2], networkedNames[3]);
+
+            // Update initial "D" marker
+            UpdateScoreboardClientRpc(playerScores, netDealerIndex.Value);
+
             StartCoroutine(GameLoop());
         }
     }
@@ -172,17 +189,14 @@ public class GameController : NetworkBehaviour
                 netCurrentPhase.Value = GamePhase.Setup;
                 ResetRoundData();
 
-                // KAAT v3.0: Rule A - Shuffle Rules
                 InitializeDeck(round);
-
-                // KAAT v3.0: Reset Trump Lock
                 netTrumpLocked.Value = false;
 
                 // --- DEAL 1 ---
                 netCurrentPhase.Value = GamePhase.Deal1;
                 yield return StartCoroutine(DealCards(5));
 
-                // --- DEALER PEEK (KAAT Rule A - Keep) ---
+                // --- DEALER PEEK ---
                 if (deck.Count > 0)
                 {
                     Card peekCard = deck[deck.Count - 1];
@@ -213,13 +227,35 @@ public class GameController : NetworkBehaviour
                 validDeal = true;
             }
 
-            // --- FINAL BIDS (KAAT v3.0: Includes Late Trump Change) ---
+            // --- FINAL BIDS ---
             netCurrentPhase.Value = GamePhase.Bidding;
             yield return StartCoroutine(RunFinalBids());
 
+            // --- NEW: MISDEAL LOGIC ---
+            // Rule: Total bids must be >= 11 (unless a 10-call is active)
+            int totalBids = finalBids.Sum();
+            bool isKaat = finalBids.Contains(10);
+
+            if (totalBids < 11 && !isKaat)
+            {
+                Debug.Log($"<color=red>MISDEAL! Total bids: {totalBids}. Minimum 11 required. Redealing...</color>");
+
+                // Show "MISDEAL" on UI for all players
+                for (int i = 0; i < 4; i++) UpdateBidUIClientRpc(i, "MISDEAL");
+
+                yield return new WaitForSeconds(3.0f);
+
+                // Decrement round counter so we repeat the same round number
+                round--;
+
+                // Restart loop immediately. 
+                // NOTE: We do NOT change the dealer index here, satisfying the "Same Dealer Redeals" rule.
+                continue;
+            }
+
             // --- PLAY ---
             netCurrentPhase.Value = GamePhase.Play;
-            uiManager.ClearAllBids();
+
             UpdateScoreUI();
 
             int leader = (netHighestBidderIndex.Value != -1) ? netHighestBidderIndex.Value : (netDealerIndex.Value + 1) % 4;
@@ -230,11 +266,11 @@ public class GameController : NetworkBehaviour
                 yield return StartCoroutine(PlayTrick());
             }
 
-            // --- SCORING (KAAT v3.0: Rule F) ---
+            // --- SCORING ---
             netCurrentPhase.Value = GamePhase.Score;
             CalculateScores();
 
-            // --- NEXT DEALER (KAAT v3.0: Rule G - Lowest score deals) ---
+            // --- NEXT DEALER ---
             int bestPlayer = 0;
             int lowestScore = int.MaxValue;
             for (int i = 0; i < 4; i++)
@@ -246,6 +282,7 @@ public class GameController : NetworkBehaviour
                 }
             }
             netDealerIndex.Value = bestPlayer;
+            UpdateScoreboardClientRpc(playerScores, netDealerIndex.Value);
 
             yield return new WaitForSeconds(3f);
         }
@@ -258,6 +295,10 @@ public class GameController : NetworkBehaviour
     IEnumerator PlayTrick()
     {
         leadSuit = null; currentWinnerCard = null; currentTrickWinner = -1; cardsPlayedInTrick = 0;
+
+        // --- FIX: Clear logical tracker ---
+        serverTrickCards.Clear();
+
         int pIdx = netCurrentLeadPlayer.Value;
 
         for (int i = 0; i < 4; i++)
@@ -273,8 +314,9 @@ public class GameController : NetworkBehaviour
             else
             {
                 var hand = player.currentHandObjects.Select(c => c.Data).ToList();
-                var table = GetTableCards();
-                // KAAT Rule E: Validated by BotAI.GetLegalMoves logic
+                // --- FIX: Use logical table tracker for accuracy ---
+                var table = new List<Card>(serverTrickCards);
+
                 var legalCards = BotAI.GetLegalMoves(hand, table, leadSuit, (Suit)netCurrentTrump.Value);
 
                 List<int> flat = new List<int>();
@@ -306,19 +348,31 @@ public class GameController : NetworkBehaviour
         var handData = playerHandObj.Select(c => c.Data).ToList();
         if (handData.Count == 0) return;
 
-        var table = GetTableCards();
+        // Use logical tracker
+        var table = new List<Card>(serverTrickCards);
+
         var legalMoves = BotAI.GetLegalMoves(handData, table, leadSuit, (Suit)netCurrentTrump.Value);
         if (legalMoves.Count == 0) legalMoves = handData;
 
-        Card bestCard = legalMoves[Random.Range(0, legalMoves.Count)];
-        var cardObjToPlay = playerHandObj.FirstOrDefault(c => c.Data.suit == bestCard.suit && c.Data.rank == bestCard.rank);
+        Card cardToPlay = BotAI.ChooseCardToPlay(handData, table, leadSuit, (Suit)netCurrentTrump.Value);
+
+        // --- FIX: Remove .Data from cardToPlay (it is already a Card) ---
+        var cardObjToPlay = playerHandObj.FirstOrDefault(c => c.Data.suit == cardToPlay.suit && c.Data.rank == cardToPlay.rank);
 
         if (cardObjToPlay != null) PlayCardLogic(pIdx, cardObjToPlay);
     }
 
     void PlayCardLogic(int playerIndex, UICard card)
     {
-        if (cardsPlayedInTrick == 0) leadSuit = card.Data.suit;
+        if (cardsPlayedInTrick == 0)
+        {
+            leadSuit = card.Data.suit;
+            serverTrickCards.Clear();
+        }
+
+        // --- FIX: Update Logical Tracker ---
+        serverTrickCards.Add(card.Data);
+
         AnimateCardPlayClientRpc(card.GetComponent<NetworkObject>().NetworkObjectId, playerIndex);
 
         bool isNewWinner = false;
@@ -440,10 +494,10 @@ public class GameController : NetworkBehaviour
 
             if (kaatActive && finalBids[pIdx] != 10)
             {
-                finalBids[pIdx] = 2;
+                finalBids[pIdx] = 2; // Store logical value
                 UpdateBidUIClientRpc(pIdx, "2");
-                yield return new WaitForSeconds(0.5f); 
-                continue; 
+                yield return new WaitForSeconds(0.5f);
+                continue;
             }
 
             int minAllowed = 2;
@@ -479,6 +533,16 @@ public class GameController : NetworkBehaviour
     // 6. SERVER RPCs
     // --------------------------------------------------------------------------------
 
+    // --- FIX: Name Registration RPC ---
+    [ServerRpc(RequireOwnership = false)]
+    public void RegisterNameServerRpc(string name, int index)
+    {
+        if (index >= 0 && index < 4)
+        {
+            networkedNames[index] = name;
+        }
+    }
+
     [ServerRpc(RequireOwnership = false)]
     public void RequestLateTrumpChangeServerRpc(int playerIndex, Suit newSuit)
     {
@@ -490,13 +554,12 @@ public class GameController : NetworkBehaviour
         netTrumpLocked.Value = true;
         finalBids[playerIndex] = 10;
 
-        ForceKaatBids(playerIndex); 
+        ForceKaatBids(playerIndex);
 
         UpdateTrumpUIClientRpc(newSuit);
         UpdateBidUIClientRpc(playerIndex, "10");
 
         humanInputReceived = true;
-        Debug.Log($"[KAAT] Player {playerIndex} invoked Late Trump Change. Suit: {newSuit}, Bid: 10.");
     }
 
     [ServerRpc(RequireOwnership = false)]
@@ -509,7 +572,7 @@ public class GameController : NetworkBehaviour
         {
             UICard cardToPlay = obj.GetComponent<UICard>();
             var hand = players[pIdx].currentHandObjects.Select(x => x.Data).ToList();
-            var table = GetTableCards();
+            var table = new List<Card>(serverTrickCards); // Use logical tracker
             Suit? currentLead = (cardsPlayedInTrick == 0) ? null : leadSuit;
             var legal = BotAI.GetLegalMoves(hand, table, currentLead, (Suit)netCurrentTrump.Value);
 
@@ -553,8 +616,29 @@ public class GameController : NetworkBehaviour
     }
 
     // --------------------------------------------------------------------------------
-    // 7. CLIENT RPCs
+    // 7. CLIENT RPCs (RESTORED FROM DESTRUCTION)
     // --------------------------------------------------------------------------------
+
+    // --- FIX: Name Synchronization RPC ---
+    [ClientRpc]
+    public void SyncNamesClientRpc(string n0, string n1, string n2, string n3)
+    {
+        if (scoreboard != null)
+        {
+            // Re-pack them into an array for the scoreboard
+            scoreboard.UpdateNames(new string[] { n0, n1, n2, n3 });
+            // Add back the scoreboard visual update
+            scoreboard.UpdateScoreboard(playerScores, netDealerIndex.Value, localPlayerIndex);
+        }
+    }
+
+    // --- FIX: Clear Bids RPC ---
+    [ClientRpc]
+    private void ClearBidsClientRpc()
+    {
+        // THIS WAS EMPTY - RESTORED
+        if (uiManager != null) uiManager.ClearAllBids();
+    }
 
     [ClientRpc] void ShowDealerPeekClientRpc(int dIdx, int s, int r) { if (localPlayerIndex == dIdx) Debug.Log($"<color=yellow><b>[PEEK]</b> {(Rank)r} of {(Suit)s}</color>"); }
     [ClientRpc] void NotifyReshuffleClientRpc(int pIdx) { Debug.Log($"<color=red>Reshuffle requested by Player {pIdx}</color>"); }
@@ -574,7 +658,11 @@ public class GameController : NetworkBehaviour
     [ClientRpc]
     void ShowFinalBidUIClientRpc(int client, int min)
     {
-        if (localPlayerIndex == client) auctionUI.ShowFinalBidSelector(min);
+        // THIS WAS EMPTY - RESTORED
+        if (localPlayerIndex == client)
+        {
+            auctionUI.ShowFinalBidSelector(min);
+        }
     }
 
     [ClientRpc] void HideUIClientRpc() { auctionUI.HideAll(); }
@@ -616,7 +704,7 @@ public class GameController : NetworkBehaviour
     }
 
     // --------------------------------------------------------------------------------
-    // 8. HELPERS & KAAT RULES
+    // 8. HELPERS
     // --------------------------------------------------------------------------------
 
     void InitializeDeck(int round)
@@ -744,25 +832,23 @@ public class GameController : NetworkBehaviour
         }
     }
 
-   void UpdateScoreUI() 
-    { 
-        // We must update EVERYONE, not just the server.
-        for (int i = 0; i < 4; i++) 
+    void UpdateScoreUI()
+    {
+        for (int i = 0; i < 4; i++)
         {
             string statusText = $"{tricksWon[i]} / {finalBids[i]}";
-            
-            // 1. Update Host locally immediately
-            uiManager.SetBidText(i, statusText);
-            
-            // 2. Tell all clients to update their text too
             UpdateBidUIClientRpc(i, statusText);
         }
-    }    void ResetRoundData()
+    }
+
+    void ResetRoundData()
     {
         tricksWon = new int[4];
         finalBids = new int[4];
         foreach (var p in players) p.ClearHandVisuals();
-        uiManager.ClearAllBids();
+        
+        // --- FIX: CLEAR BIDS ON CLIENTS TOO ---
+        ClearBidsClientRpc();
     }
 
     void CalculateScores()
@@ -823,6 +909,5 @@ public class GameController : NetworkBehaviour
                 UpdateBidUIClientRpc(i, "2");
             }
         }
-        Debug.Log($"[KAAT] Player {tenBidderIndex} bid 10! All others forced to 2.");
     }
 }

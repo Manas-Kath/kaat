@@ -24,6 +24,12 @@ public class HandVisualizer : MonoBehaviour
     public float verticalArch = 15f;     
     public float popUpAmount = 20f; 
 
+    [Header("Platform Adjustments")]
+    [Tooltip("Widens the gap between cards for the player (easier to tap).")]
+    public float humanSpacingMultiplier = 1.6f; 
+    [Tooltip("Squishes opponents' cards to save screen space.")]
+    public float opponentSpacingMultiplier = 0.6f;
+
     public List<UICard> currentHandObjects = new List<UICard>();
     private List<Card> highlightedCardsData = new List<Card>();
 
@@ -48,6 +54,15 @@ public class HandVisualizer : MonoBehaviour
         bool isLeft  = (layoutId == 3);
         bool isSide  = (isRight || isLeft);
 
+        // --- NEW LOGIC START ---
+        // 1. Determine Spacing: Wide for human, tight for opponents
+        float currentSpacing = cardSpacing * (isHuman ? humanSpacingMultiplier : opponentSpacingMultiplier);
+
+        // 2. Determine Arch & Fan: 0 for human (straight line), normal for opponents
+        float currentArch = isHuman ? 0f : verticalArch;
+        float currentFanAngle = isHuman ? 0f : fanSpreadAngle;
+        // --- NEW LOGIC END ---
+
         for (int i = 0; i < cardCount; i++)
         {
             UICard card = currentHandObjects[i];
@@ -57,7 +72,9 @@ public class HandVisualizer : MonoBehaviour
             card.transform.DOKill();
 
             float indexDistanceFromCenter = i - centerIndex;
-            float actualFanAngle = (cardCount > 1) ? fanSpreadAngle : 0;
+            
+            // Use currentFanAngle here
+            float actualFanAngle = (cardCount > 1) ? currentFanAngle : 0;
             float angleStep = (cardCount > 1) ? actualFanAngle / (cardCount - 1) : 0;
 
             Vector3 targetPos = Vector3.zero;
@@ -68,18 +85,28 @@ public class HandVisualizer : MonoBehaviour
             {
                 float sideRotBase = isRight ? 90f : -90f;
                 float normalizedPos = indexDistanceFromCenter / (cardCount > 1 ? cardCount : 1f);
-                float archOffset = verticalArch * (1f - (normalizedPos * normalizedPos));
+                
+                // Use currentArch here
+                float archOffset = currentArch * (1f - (normalizedPos * normalizedPos));
                 if (isRight) archOffset = -archOffset; 
-                float spacingOffset = -indexDistanceFromCenter * cardSpacing; 
+                
+                // Use currentSpacing here
+                float spacingOffset = -indexDistanceFromCenter * currentSpacing; 
+                
                 targetPos = new Vector3(archOffset, spacingOffset, 0);
                 targetRot = new Vector3(0, 0, sideRotBase - (indexDistanceFromCenter * (angleStep * 0.5f))); 
             }
             else
             {
-                float xPos = indexDistanceFromCenter * cardSpacing;
+                // Use currentSpacing here
+                float xPos = indexDistanceFromCenter * currentSpacing;
+                
                 float normalizedPos = indexDistanceFromCenter / (cardCount > 1 ? cardCount : 1f);
-                float yPos = verticalArch * (1f - Mathf.Abs(normalizedPos)); 
+                
+                // Use currentArch here
+                float yPos = currentArch * (1f - Mathf.Abs(normalizedPos)); 
                 if (isTop) yPos = -yPos; 
+                
                 float zRot = -indexDistanceFromCenter * angleStep;
                 if (isTop) zRot = -zRot; 
                 targetPos = new Vector3(xPos, yPos, 0);
